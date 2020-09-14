@@ -18,19 +18,69 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
 
+import os
+import datetime
+import logging
+from datetime import date
+
 class Target(object):
     pluginName = "Base Class"
+    episodeDate = datetime.datetime.now()
+    priority = 0
+    logger = logging.getLogger("target base class")
+        
 
-    def __init__(self, config, episode):
-        print "If this were a real plugin we would do some initalization here"
+    # by default, plugins are not triggered in "archive" mode where we read
+    # from the db.  Plugins have to ask to be included by setting this true
+    enableArchive = False  
+
+    def __init__(self, config, episode, episodeDate):
+        print("If this were a real plugin we would do some initalization here")
 
     def close(self):
-        print "If this were a real plugin we would do some destruction here"
+        print("If this were a real plugin we would do some destruction here")
 
-    def logTrack(self, title, artist, album, time, startTime):
-        print "If this were a real plugin it would do something profound with this data:"
+    def logTrack(self, track, startTime):
+        print("If this were a real plugin it would do something profound with this data:")
 
-        print "title: " + title
-        print "artist: " + artist
-        print "album: " + album
-        print "time: " + time
+        print("title: " + track.title)
+        print("artist: " + track.artist)
+        print("album: " + track.album)
+        print("length: " + track.length)
+        print("id: " + track.uniqueId)
+        print("artwork: " + track.artwork)
+
+    def getLongDate(self):
+        text = ""
+
+        # compute the suffix
+        day = self.episodeDate.day
+        if 4 <= day <= 20 or 24 <= day <= 30:
+            suffix = "th"
+        else:
+            suffix = ["st", "nd", "rd"][day % 10 - 1]
+
+        text = ('{dt:%B} {dt.day}' + suffix + ', {dt.year}').format(dt=self.episodeDate)
+
+        return text
+
+    def getTimeStamp(self, tDelta):
+        d = {"D": tDelta.days}
+        hours, rem = divmod(tDelta.seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+
+        padH = "{:02d}".format(hours)
+        padM = "{:02d}".format(minutes)
+        padS = "{:02d}".format(seconds)
+
+        return f"{padH}:{padM}:{padS}"
+
+    def getEpisodeTitle(self, episodeNumber):
+        return f"Episode {episodeNumber} - {self.getLongDate()}"
+
+    def logToFile(self, fh, text):
+        fh.write(text)
+
+        fh.flush()
+        os.fsync(fh.fileno())
+

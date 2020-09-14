@@ -25,11 +25,11 @@ import os
 class StdioTarget(Target):
     pluginName = "stdio Track Updater"
 
-    def __init__(self, config, episode):
+    def __init__(self, config, episode, episodeDate):
         return
 
     def close(self):
         return
 
-    def logTrack(self, title, artist, album, time, startTime):
-        print artist + " - " + title
+    def logTrack(self, track, startTime):
+        print(f"{track.artist} - {track.title}")

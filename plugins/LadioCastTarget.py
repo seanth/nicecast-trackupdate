@@ -30,7 +30,7 @@ class LadioCastTarget(Target):
     initAlbum = ""
     initTime = ""
 
-    def __init__(self, config, episode):
+    def __init__(self, config, episode, episodeDate):
         try:
             self.initTitle = config.get('LadioCastTarget', 'initTitle')
             self.initArtist = config.get('LadioCastTarget', 'initArtist')
@@ -46,8 +46,8 @@ class LadioCastTarget(Target):
     def close(self):
         return
 
-    def logTrack(self, title, artist, album, time, startTime):
-        theCmd = """osascript -e 'tell application "LadioCast" to set metadata song to "%s -- %s"'""" % (title, artist)
+    def logTrack(self, track, startTime):
+        theCmd = """osascript -e 'tell application "LadioCast" to set metadata song to "%s - %s"'""" % (track.artist, track.title)
 
         os.system(theCmd)
 

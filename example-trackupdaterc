@@ -2,6 +2,9 @@
 # You can blacklist an album name (to omit it from the listings)
 introAlbum: Radio Programme Heartbeat
 pollTime: 1
+pollScriptPath: Automation/GetCurrentTrackJSONWithArtwork.scpt
+coverImagePath: ~/radio/covers/
+coverImageBaseURL: https://example.com/radio/covers/
 
 # default info to appear while iTunes is stopped
 useStopValues: True
@@ -9,13 +12,18 @@ stopTitle: grahams' completely normal radio programme
 stopArtist: grahams
 stopAlbum: grahams' completely normal radio programme
 
+# if the album title matches, the `ignore` parameter to `logTrack` will be
+# True
+ignoreAlbum: Radio Programme
+
 # these are some initial values to insert into the NowPlaying.txt file.
 # Will be overridden by the first (non-ignoreAlbum'ed) track you play
-[NicecastTarget]
-enabled: True
+[AudioHijackTarget]
+enabled: False
 initTitle: Show will begin shortly
 initArtist: grahams
 initAlbum: grahams' completely normal radio programme
+initDestination: ~/Music/Audio Hijack/NowPlaying.txt
 initTime: 9:99
 
 [LadioCastTarget]
@@ -27,17 +35,6 @@ initTime: 9:99
 
 [StdioTarget]
 enabled: True
-
-[WikiTarget]
-enabled: True
-wikiApiURL: http://wiki.example.com/api.php
-wikiUsername: Vincent
-wikiPassword: pencil
-wikiPageName: The Antonelli Hour
-
-# If this is set, this will be used as a link in the title of the wikitext.  
-# It will be processed by strftime, so you can format it
-wikiArchiveURL: http://example.com/media/archive/%Y%m%d%%20-%%20The%%20Antonelli%%20Hour%%20Radio%%20.mp3
 
 [TwitterTarget]
 enabled: True
@@ -53,33 +50,44 @@ OAuthConsumerSecret: <key>
 # plugin.  You will need to open a url (provided by the plugin) and
 # authorize the application WHILE LOGGED IN AS THE TWITTER ACCOUNT YOU WISH
 # TO POST TO!  Once you authorize the application you'll receive a PIN which
-# you will input into nicecast-trackupdate.  Once you have done all this,
+# you will input into trackupdate.  Once you have done all this,
 # the following two config values will be written to the screen.  Copy them
 # into this file and you'll never have to deal with this OAuth nonsense
 # again (i hope)
 #OAuthUserToken: <key>
 #OAuthUserTokenSecret: <key>
 
-[WordpressTarget]
-enabled: True
-username: foouser
-password: pencil
-xmlrpc: http://your.blog.com/xmlrpc.php
-blogId: 0
-
-[ID3Target]
-enabled: True
-# where you have Nicecast configured to store it's archives
-filePath: /Users/grahams/Music/Nicecast Broadcast Archive/
-
-# these values will be put into the mp3's id3v2 tag
-artistName: grahams
-albumName: grahams' completely normal radio programme
-
 [SlackTarget]
 enabled: True
-slackChannel : #workshop
 #see https://api.slack.com/incoming-webhooks for info on slack webhooks
 webhookURL : <slack webhook url>
-emojiName : musical_note
-announcementPrefix: "You hear a voice over the radio say: "
+
+[SqliteTarget]
+enabled: False
+dbPath: ~/src/trackupdate/db/trackupdate.sqlite
+
+[ListCommon]
+showArtist: grahams
+filePath: ~/Music/Audio Hijack
+archiveURL: http://example.com/media/archive/%Y%m%d%%20-%%20The%%20Antonelli%%20Hour%%20Radio%%20.mp3
+
+[TrackListFileTarget]
+enabled: True
+
+[CueFileTarget]
+enabled: True
+
+[CsvFileTarget]
+enabled: True
+
+[WikiFileTarget]
+enabled: True
+
+[BlogFileTarget]
+enabled: True
+
+[BackblazeTarget]
+enabled: True
+appKey: xx
+appKeyId: yy
+bucketName: radio-images

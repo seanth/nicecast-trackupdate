@@ -1,4 +1,4 @@
-# Copyright (c) 2017 Sean T. Hammond
+# Copyright (c) 2017-2020 Sean T. Hammond, Sean M. Graham
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -19,46 +19,106 @@
 # IN THE SOFTWARE.
 
 from Target import Target
-import ConfigParser
+import configparser
 import os
 import string
+import subprocess
+import json
+import requests
+import logging
+import uuid
+import time
 
 class SlackTarget(Target):
-    nowPlayingFilePath = os.path.expanduser('~/Library/Application Support/Nicecast/NowPlaying.txt')
     pluginName = "Slack Track Updater"
+    logger = logging.getLogger("slack updater")
 
-    # config values
-    slackChannel = "" #what slack channel do you want the track data announced in
-    slackWebHookUrl = "" #this is the slack webhook url. See https://api.slack.com/incoming-webhooks for more info
-    slackEmoji = "" #you can prefix the text sent to slack with an emoji. it only appears if the viewer's message display is set to "clean" in preferences
-    slackAnnouncementPrefix = "" #this should be the "user name", but we're using it almost like moo-like a stage-talk
+    slackWebHookUrl = "" # https://api.slack.com/incoming-webhooks
 
-    def __init__(self, config, episode):
-        self.theJSONPayload = '{"channel": "%s", "username": %s, "text": "%s", "icon_emoji": ":%s:"}'
+    def __init__(self, config, episode, episodeDate):
+        if(episodeDate):
+            self.episodeDate = episodeDate
+        
         try:
-            self.slackChannel = config.get('SlackTarget', 'slackChannel')
             self.slackWebHookUrl = config.get('SlackTarget', 'webhookURL')
-            self.slackEmoji = config.get('SlackTarget', 'emojiName')
-            self.slackAnnouncementPrefix = config.get('SlackTarget', 'announcementPrefix')
-        except ConfigParser.NoSectionError:
-            print("SlackTarget: No [SlackTarget] section in config")
+        except configparser.NoSectionError:
+            self.logger.error("SlackTarget: No [SlackTarget] section in config")
             return
-        except ConfigParser.NoOptionError:
-            print("SlackTarget: Missing values in config")
+        except configparser.NoOptionError:
+            self.logger.error("SlackTarget: Missing values in config")
             return
 
     def close(self):
         return
 
-    def logTrack(self, title, artist, album, time, startTime):
-        #make sure the title and artist don't have an apostrophe or quote in them
-        theTitle=string.replace(title, "\'", "\u0027")
-        theTitle=string.replace(theTitle, "\'", "\u0022")
-        theArtist=string.replace(artist, "\'", "\u0027")
-        theArtist=string.replace(theArtist, "\"", "\u0022")
-        theTrackString = "_%s_ by %s" % (theTitle, theArtist)
-        thePayload = self.theJSONPayload % (self.slackChannel, self.slackAnnouncementPrefix, theTrackString, self.slackEmoji)
-        theArgument = "curl -X POST --data-urlencode 'payload=%s'  %s" % (thePayload, self.slackWebHookUrl)
-        os.system(theArgument)
+    def logTrack(self, track, startTime):
 
+        artworkUrl = None
+        postString = f'{track.title} by {track.artist}'
 
+        blocks = [{
+            "type": "section",
+            "block_id": str(uuid.uuid4()),
+            "fields": [
+            {
+                    "type": "mrkdwn",
+                    "text": "*Song*"
+            },
+            {
+                    "type": "mrkdwn",
+                    "text": track.title
+            },
+            {
+                    "type": "mrkdwn",
+                    "text": "*Artist*"
+            },
+            {
+                    "type": "mrkdwn",
+                    "text": track.artist
+            },
+            {
+                    "type": "mrkdwn",
+                    "text": "*Album*"
+            },
+            {
+                    "type": "mrkdwn",
+                    "text": track.album
+            }
+            ]
+        }]
+
+        if(track.artwork != "/dev/null"):
+            artworkUrl = track.getArtworkURL()
+
+        if(artworkUrl is not None):
+            # Since it takes awhile for the images to propagate, let's make
+            # sure they exist first
+            waitingUpload = True
+            failureCounter = 5
+
+            while(waitingUpload and (failureCounter > 0) ):
+                imgRequest = requests.get(artworkUrl)
+
+                self.logger.debug("imgRequest status: " + str(imgRequest.status_code))
+
+                if(imgRequest.status_code == 404):
+                    self.logger.debug(f"Cover Image 404: 5s Delay. {failureCounter} left")
+                    failureCounter = failureCounter - 1;
+                    time.sleep(5);
+                else:
+                    blocks[0]["accessory"] = {
+                                "type": "image",
+                                "image_url": artworkUrl,
+                                "alt_text": f"Cover image of {postString}"
+                    }
+                    failureCounter = -1
+                    waitingUpload = False
+
+        if( track.ignore is not True):
+            payload = { 'text': postString, 'blocks': blocks }
+
+            self.logger.debug("sending payload: " + json.dumps(payload))
+
+            r = requests.post(self.slackWebHookUrl, json=payload)
+            self.logger.debug("post status: " + str(r.status_code))
+            self.logger.debug("post response: " + str(r.text))
