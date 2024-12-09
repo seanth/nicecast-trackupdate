@@ -31,17 +31,21 @@ import subprocess
 import json
 import traceback
 import sqlite3
+import requests
+import re
 
-from datetime import datetime
+from urllib.parse import quote
+from datetime import datetime,date
 from operator import attrgetter
 from Track import Track
+from pathlib import Path
 
 pluginList = []
 
 class TrackUpdate(object):
     introAlbum = ""
 
-    currentTrack = Track(None,None,None,None,None,None,None,None,None)
+    currentTrack = Track(None,None,None,None,None,None,None)
 
     coverImagePath = ""
     coverImageBaseURL = ""
@@ -61,6 +65,7 @@ class TrackUpdate(object):
     dbPath = None
     conn = None
     c = None
+    logger = logging.getLogger()
 
     def usage(self):
         print( "Usage: trackupdate.py [arguments]" )
@@ -84,11 +89,11 @@ Example:
 
     def __init__(self,argv):
         config = None
-        logging.basicConfig(level=logging.WARNING)
+        self.logger.setLevel(logging.WARNING)
 
         # process config file
         if not os.path.isfile(os.path.expanduser('~/.trackupdaterc')):
-            logging.warning("Warning: no config .trackupdaterc file.")
+            self.logger.warning("Warning: no config .trackupdaterc file.")
 
         config = configparser.ConfigParser()
         config.read(os.path.expanduser('~/.trackupdaterc'))
@@ -108,10 +113,10 @@ Example:
             self.dbPath = config.get('SqliteTarget', 'dbPath')
             
         except configparser.NoSectionError:
-            logging.error("Warning: Invalid config file, no [trackupdate] section.")
+            self.logger.error("Warning: Invalid config file, no [trackupdate] section.")
             pass
         except configparser.NoOptionError:
-            logging.error("[trackupdate]: Missing values in config")
+            self.logger.error("[trackupdate]: Missing values in config")
             return
 
         self.coverImagePath = os.path.expanduser(self.coverImagePath) 
@@ -124,8 +129,8 @@ Example:
                                            "pattern=", "verbose", "archive"])
             except (getopt.GetoptError) as err:
                 # print help information and exit:
-                logging.error(str(err)) # will print something like 
-                                        # "option -a not recognized"
+                self.logger.error(str(err)) # will print something like 
+                                       # "option -a not recognized"
                 self.usage()
                 sys.exit(2)
 
@@ -141,17 +146,16 @@ Example:
 
                     self.pollTime = a
                 elif o in ("-p", "--pattern"):
-                    logging.debug("Plugin pattern set to: " + a)
+                    self.logger.debug("Plugin pattern set to: " + a)
                     self.pluginPattern = a
                 elif o in ("-v", "--verbose"):
                     # remove any logging handlers created by logging before
                     # BasicConfig() is called
-                    root = logging.getLogger()
-                    if root.handlers:
-                        for handler in root.handlers:
-                            root.removeHandler(handler)
+                    if(self.logger.handlers):
+                        for handler in self.logger.handlers:
+                            self.logger.removeHandler(handler)
 
-                    logging.basicConfig(level=logging.DEBUG)
+                    self.logger.setLevel(logging.DEBUG)
                     logging.debug("Starting up. Press Ctrl-C to stop.")
                 elif o in ("-h", "--help"):
                     self.usage()
@@ -159,14 +163,21 @@ Example:
                 else:
                     assert False, "unhandled option"
 
+        # default stopArtwork if empty
+        if(self.stopArtwork == ""):
+            todayName = date.today().strftime("%Y%m%d.jpg")
+            self.stopArtwork = todayName
+
+        self.logger.debug(f"self.stopArtwork is {self.stopArtwork}")
+
         try:
             if(self.useDatabase):
-                logging.debug("In archive mode, reading from sqlite db")
-                logging.debug("Episode #: %s" % str(self.episodeNumber))
-                logging.debug("Time between polling: %i" % self.pollTime)
+                self.logger.debug("In archive mode, reading from sqlite db")
+                self.logger.debug("Episode #: %s" % str(self.episodeNumber))
+                self.logger.debug("Time between polling: %i" % self.pollTime)
 
                 if(self.episodeNumber == "XX"):
-                    logging.error('Episode number ("-e/--episode") required for archive mode')
+                    self.logger.error('Episode number ("-e/--episode") required for archive mode')
                 else:
                     self.dbPath = os.path.expanduser(self.dbPath)
                     self.conn = sqlite3.connect(self.dbPath)
@@ -175,16 +186,16 @@ Example:
                     # retrieve the first date 
                     for row in self.c.execute("SELECT startTime FROM trackupdate WHERE episodeNumber = '%s' ORDER BY startTime LIMIT 1" % self.episodeNumber):
                         sTime = datetime.fromisoformat(row[0])
-                        logging.debug("Archive Date: " + str(sTime))
+                        self.logger.debug("Archive Date: " + str(sTime))
                         self.archiveDate = sTime
 
                     self.loadPlugins(config)
 
                     self.archiveLoop()
             else:
-                logging.debug("In live mode, reading from Applescript")
-                logging.debug("Episode #: %s" % str(self.episodeNumber))
-                logging.debug("Time between polling: %i" % self.pollTime)
+                self.logger.debug("In live mode, reading from Applescript")
+                self.logger.debug("Episode #: %s" % str(self.episodeNumber))
+                self.logger.debug("Time between polling: %i" % self.pollTime)
 
                 self.loadPlugins(config)
                 self.liveLoop()
@@ -192,20 +203,20 @@ Example:
             self.cleanUp()
 
     def liveLoop(self):
+        previousTrack = None
+
         if(self.introAlbum != ""):
             while(1):
                 if(self.startTime==-1):
                     try:
-                        trackJson = subprocess.check_output(["osascript",
-                                        self.pollScriptPath,
-                                        self.coverImagePath])
+                        trackJson = subprocess.check_output(["util/swinsian-track-grabber"])
                         track = json.loads(trackJson)
 
                     except subprocess.CalledProcessError:
-                        logging.error("osascript failed, skipping track")
+                        self.logger.error("osascript failed, skipping track")
                         continue
                     except json.decoder.JSONDecodeError:
-                        logging.error("JSON decode, skipping track")
+                        self.logger.error("JSON decode, skipping track")
                         continue
 
                     album = None
@@ -222,26 +233,45 @@ Example:
                     break
 
         while(1):
-            track = json.loads(subprocess.check_output(["osascript",
-                                        self.pollScriptPath,
-                                        self.coverImagePath],
+            track = json.loads(subprocess.check_output(["util/swinsian-track-grabber"],
                                                         text=True))
 
-            if(len(track) > 0):
-                self.processCurrentTrack(track)
-            elif(self.useStopValues == 'True'):
-                stopTrack = Track(self.stopTitle, 
-                                    self.stopArtist, 
-                                    self.stopAlbum, 
-                                    "9:99",
-                                    self.stopArtwork, 
-                                    self.coverImagePath,
-                                    self.coverImageBaseURL,
-                                    "", 
-                                    False)
-                self.updateTrack(stopTrack, self.startTime)
+            # this is jank but don't keep updating the track unnecessarily
+            if(previousTrack != track):
+                previousTrack = track
+
+                if(len(track) > 0):
+                    self.processCurrentTrack(track)
+                elif(self.useStopValues == 'True'):
+                    stopTrack = Track(self.stopTitle, 
+                                        self.stopArtist, 
+                                        self.stopAlbum, 
+                                        "9:99",
+                                        None,
+                                        "", 
+                                        False)
+                    self.updateTrack(stopTrack, datetime.now())
 
             time.sleep(self.pollTime)
+
+    def searchArtwork(self, trackName, searchArtist, searchAlbum):
+        url100 = None
+        url500 = None
+
+        try:
+            searchTerm = quote(f"{searchArtist} {trackName}")
+            searchUrl = f'https://itunes.apple.com/search?term={searchTerm}&entity=song&limit=1'
+            trackSearch = requests.get(searchUrl).json()
+
+            if(trackSearch['resultCount'] > 0):
+                url100 = trackSearch["results"][0]["artworkUrl100"]
+                url500 = re.sub(r'100x100', '500x500', url100)
+        except requests.exceptions.RequestException as e:
+            print(f"Cover image search failed: {e}")
+        except json.JSONDecodeError as e:
+            print(f"Cover image JSON decode failed: {e}")
+
+        return url500
 
     def archiveLoop(self):
         for row in self.c.execute("SELECT * FROM trackupdate WHERE episodeNumber = '%s' ORDER BY startTime" % self.episodeNumber):
@@ -251,17 +281,15 @@ Example:
             artist = row[3]
             album = row[4]
             length = row[5]
-            artworkFileName = row[6]
-            sTime = row[7]
-            ignore = row[8]
+            sTime = row[6]
+            ignore = row[7]
+            artworkUrl = row[8]
 
             t = Track(title,
                         artist,
                         album,
                         length,
-                        artworkFileName,
-                        self.coverImagePath,
-                        self.coverImageBaseURL,
+                        artworkUrl,
                         uniqueId,
                         ignore)
             
@@ -271,14 +299,14 @@ Example:
         self.cleanUp()
 
     def cleanUp(self):
-        logging.debug("Exiting...")
+        self.logger.debug("Exiting...")
 
         for plugin in pluginList:
             try:
                 plugin.close()
             except Exception as e:
-                logging.error(plugin + ": Error trying to close target")
-                logging.error(''.join(traceback.format_tb(sys.exc_info()[2])))
+                self.logger.error(plugin.pluginName + ": Error trying to close target")
+                self.logger.error(''.join(traceback.format_tb(sys.exc_info()[2])))
     
 
     def processCurrentTrack(self, t):
@@ -286,7 +314,6 @@ Example:
         iName = ""
         iAlbum = ""
         iLength = ""
-        iArtwork = ""
         iId = ""
 
         if('trackArtist' in t.keys()):
@@ -297,25 +324,24 @@ Example:
             iAlbum = t['trackAlbum']
         if('trackLength' in t.keys()):
             iLength = t['trackLength']
-        if('trackArtwork' in t.keys()):
-            iArtwork = t['trackArtwork']
         if('trackId' in t.keys()):
             iId = t['trackId']
 
-        if(iArtwork == "/dev/null"):
-            iArtwork = self.stopArtwork
+        artworkUrl = self.searchArtwork(iName,iArtist,iAlbum)
+
+        if(artworkUrl == None):
+            self.logger.debug("No artwork found in search, using default")
+            artworkUrl = f"{self.coverImageBaseURL}/{self.stopArtwork}"
 
         track = Track(iName, 
                       iArtist, 
                       iAlbum, 
                       iLength, 
-                      iArtwork, 
-                      self.coverImagePath,
-                      self.coverImageBaseURL,
+                      artworkUrl,
                       iId, 
                       False)
 
-        self.updateTrack(track, self.startTime)
+        self.updateTrack(track, datetime.now())
 
     def updateTrack(self, track, startTime):
         # make sure the track has actually changed
@@ -332,11 +358,11 @@ Example:
                 try:
                     plugin.logTrack(track, startTime)
                 except Exception as e:
-                    logging.error(plugin + ": Error trying to update track")
-                    logging.error(''.join(traceback.format_tb(sys.exc_info()[2])))
+                    self.logger.error(str(plugin) + ": Error trying to update track")
+                    self.logger.error(''.join(traceback.format_tb(sys.exc_info()[2])))
 
     def loadPlugins(self, config):
-        logging.debug("Loading plugins...")
+        self.logger.debug("Loading plugins...")
 
         scriptPath = os.path.split(os.path.abspath(__file__))[0]
         
@@ -356,9 +382,9 @@ Example:
                 enabled = 'False'
 
             if(enabled=='False'):
-                logging.debug("Skipping plugin '%s'." % className)
+                self.logger.debug("Skipping plugin '%s'." % className)
             else:
-                logging.debug("Loading plugin '%s'...." % className)
+                self.logger.debug("Loading plugin '%s'...." % className)
 
                 # import the module
                 mod = __import__(className, globals(), locals(), [''])
@@ -367,7 +393,7 @@ Example:
                 cls  = getattr(mod,className)
 
                 if(self.useDatabase and not cls.enableArchive):
-                    logging.debug(f"{cls.pluginName} Plugin not enabled for archive mode, skipping")
+                    self.logger.debug(f"{cls.pluginName} Plugin not enabled for archive mode, skipping")
                 else:
                     # initialize the plugin
                     o = cls(config, self.episodeNumber, self.archiveDate)

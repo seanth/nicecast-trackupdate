@@ -32,21 +32,17 @@ import csv
 
 from datetime import date
 
-class CsvFileTarget(Target):
-    pluginName = "CSV File Writer"
+class UTCsvFileTarget(Target):
+    pluginName = "UT CSV File Writer"
     enableArchive = True
-    showTitle = ""
-    showArtist = ""
     episodeNumber = None
 
     filePath = ""
-    coverImagePath = ""
-    stopArtwork = ""
 
     trackCount = 0
     initialTime = None
 
-    logger = logging.getLogger("CSV updater")
+    logger = logging.getLogger("UT CSV updater")
 
     def __init__(self, config, episode, episodeDate):
         self.episodeNumber = episode
@@ -56,21 +52,12 @@ class CsvFileTarget(Target):
         # read config entries
         try:
             self.filePath = config.get('ListCommon', 'filePath')
-            self.showTitle = config.get('ListCommon', 'showTitle')
-            self.showArtist = config.get('ListCommon', 'showArtist')
-            self.coverImagePath = config.get('trackupdate', 'coverImagePath')
-            self.stopArtwork = config.get('trackupdate', 'stopArtwork')
         except configparser.NoSectionError:
             logging.error("ListCommon: No [ListCommon] section in config")
             return
         except configparser.NoOptionError:
             logging.error("ListCommon: Missing values in config")
             return
-
-        # default stopArtwork if empty
-        if(self.stopArtwork == ""):
-            todayName = date.today().strftime("%Y%m%d.jpg")
-            self.stopArtwork = todayName
 
         # if I gave a shit about non-unix platforms I might
         # try to use the proper path sep here. exercise left 
@@ -81,17 +68,13 @@ class CsvFileTarget(Target):
         self.filePath = os.path.expanduser(self.filePath)
 
         fileDate = '{dt:%Y}{dt:%m}{dt:%d}'.format(dt=self.episodeDate)
-        fullFilePath = self.filePath + fileDate + ".csv"
+        fullFilePath = self.filePath + fileDate + ".ut.csv"
         showYear = '{dt:%Y}'.format(dt=self.episodeDate)
 
         self.csvFile = open(fullFilePath, 'w', newline='')
         self.csvWriter = csv.writer(self.csvFile)
 
-        self.csvWriter.writerow(["PODCAST",self.showTitle, None, None, None])
-        self.csvWriter.writerow(["TITLE",self.getEpisodeTitle(self.episodeNumber), None, None, None])
-        self.csvWriter.writerow(["AUTHOR",self.showArtist, None, None, None])
-        self.csvWriter.writerow(["DESCRIPTION", None, None, None, None])
-        self.csvWriter.writerow(["YEAR", showYear, None, None, None])
+        self.csvWriter.writerow(["artist", "title", "timecode"])
 
         return
 
@@ -102,26 +85,18 @@ class CsvFileTarget(Target):
         if(self.initialTime == None):
             self.initialTime = startTime
 
-        if( (track.artworkURL != None) and (self.stopArtwork not in track.artworkURL) ):
-            artworkPath = track.fetchArtwork(self.coverImagePath)
-        else:
-            artworkPath = f"{self.coverImagePath}/{self.stopArtwork}"
+        tDelta = startTime - self.initialTime
+        
+        minutes = int(tDelta.total_seconds() / 60)
+        seconds = int(tDelta.total_seconds() % 60)
 
-        if( track.ignore is not True):
-            # compute the time since the start of the show
-            tDelta = startTime - self.initialTime
-
-            self.trackCount += 1
-
-            tFormat = self.getTimeStamp(tDelta)
-
-            self.csvWriter.writerow([track.title, tFormat, None,
-                                    artworkPath, False])
+        self.csvWriter.writerow([track.artist, track.title,
+                                 f'{minutes:02}:{seconds:02}' ])
 
         return
 
     def close(self):
-        print("Closing Csv File...")
+        print("Closing UTCsv File...")
 
         self.csvFile.close()
 
